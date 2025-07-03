@@ -19,11 +19,9 @@ BASE_DIR = Path(__file__).parent
 FILE_SUBS = BASE_DIR / "subscriptions.tsv"
 FILE_FB = BASE_DIR / "fb_export_it_all_time.csv"
 
-
 @st.cache_data(show_spinner=False)
 def load_subs(p: Path) -> pd.DataFrame:
     return pd.read_csv(p, sep="\t")
-
 
 @st.cache_data(show_spinner=False)
 def load_fb(p: Path) -> pd.DataFrame:
@@ -34,15 +32,12 @@ def load_fb(p: Path) -> pd.DataFrame:
     )
     return fb
 
-
 # ───────── raw data ─────────
 df_raw = load_subs(FILE_SUBS)
 fb_raw = load_fb(FILE_FB)
 
 df_raw["created_at"] = pd.to_datetime(df_raw["created_at"])
-
 df_raw = df_raw[df_raw["user_visit.utm_source"].isin(["ig", "fb"])]
-
 df_raw["campaign_clean"] = (
     df_raw["user_visit.utm_campaign"].astype(str).str.split(" (", n=1, regex=False).str[0]
 )
@@ -62,14 +57,11 @@ sel_price = st.multiselect(
 )
 
 # ───────── clickable campaign table ─────────
-# aggregate purchases per campaign
 campaign_stats = (
     df_raw.groupby("campaign_clean")["charges_count"].sum().reset_index(name="Purchases")
 )
-
 gb = GridOptionsBuilder.from_dataframe(campaign_stats)
 gb.configure_selection("single", use_checkbox=True)
-
 grid = AgGrid(
     campaign_stats,
     gridOptions=gb.build(),
@@ -89,7 +81,6 @@ df = df_raw[
     & (df_raw["created_at"].dt.date.between(start, end))
     & (df_raw[price_col].isin(sel_price))
 ].copy()
-
 if selected_campaign:
     df = df[df["campaign_clean"] == selected_campaign]
 
@@ -106,7 +97,6 @@ exp = (
     df.loc[df.index.repeat(df["charges_count"].astype(int))]
     .assign(period=lambda d: d.groupby(level=0).cumcount())
 )
-
 size = exp[exp.period == 0].groupby("cohort_date").size()
 
 dead = (
@@ -114,7 +104,6 @@ dead = (
     .groupby("cohort_date").size()
     .reindex(size.index, fill_value=0)
 )
-
 death_pct = (dead / size * 100).round(1)
 
 revenue = (
@@ -128,17 +117,16 @@ spend = (
     fb_raw.groupby("cohort_date")["Amount spent (USD)"]
     .sum()
     .reindex(size.index, fill_value=0)
-    .round(2)
 )
-
-roas = (revenue / spend.replace(0, pd.NA)).round(2)
+spend_safe = spend.replace(0, pd.NA).astype(float)
+roas = (revenue / spend_safe).round(2)
+spend = spend.round(2)
 
 pivot = exp.pivot_table(index="cohort_date", columns="period", aggfunc="size", fill_value=0)
 ret = pivot.div(size, axis=0).mul(100).round(1)
 ret.columns = [f"Period {p}" for p in ret.columns]
 
 # ───────── assemble display table ─────────
-
 death_cell = (
     death_pct.map(lambda v: f"{v:.1f}%")
     + " "
@@ -147,7 +135,6 @@ death_cell = (
     + dead.astype(str)
     + ")"
 )
-
 ret_disp = ret.applymap(lambda x: "—" if pd.isna(x) else f"{x:.1f}%")
 
 combo = pd.concat(
@@ -164,7 +151,6 @@ combo = pd.concat(
 
 # TOTAL row
 weighted = lambda s: (s * size).sum() / size.sum()
-
 total_row = {
     "Cohort death": f"💀 {weighted(death_pct):.1f}% {bar(weighted(death_pct))}",
     "Spend USD": f"${spend.sum():,.2f}",
@@ -178,7 +164,7 @@ for col in ret.columns:
 combo.loc["TOTAL"] = total_row
 combo = pd.concat([combo.drop("TOTAL").sort_index(ascending=False), combo.loc[["TOTAL"]]])
 
-# ───────── style helpers ─────────
+# ───────── style + render ─────────
 Y_R, Y_G, Y_B = 255, 212, 0
 rgba = lambda a: f"rgba({Y_R},{Y_G},{Y_B},{a:.2f})"
 txt = lambda a: "black" if a > 0.5 else "white"
@@ -192,8 +178,7 @@ for ix, row in combo.iterrows():
         fills.append(["#444444"] * len(combo.columns))
         fonts.append(["white"] * len(combo.columns))
         continue
-    # first 5 cols constant colour (death, spend, revenue, ltv, roas)
-        c_row = ["#1e1e1e", "#333333", "#333333", "#333333", "#333333"]
+    c_row = ["#1e1e1e", "#333333", "#333333", "#333333", "#333333"]
     f_row = ["white"] * 5
     for p in ret.loc[ix].values / 100:
         if p == 0 or pd.isna(p):
@@ -224,4 +209,3 @@ fig_table.update_layout(
 
 st.title("Cohort Retention — IG & FB only — real_payment = 1")
 st.plotly_chart(fig_table, use_container_width=True)
-
