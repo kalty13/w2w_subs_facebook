@@ -73,7 +73,7 @@ grid = AgGrid(
     theme="alpine",
 )
 sel_rows = grid["selected_rows"]
-selected_campaign = sel_rows[0].get("campaign_clean") if len(sel_rows) > 0 else None
+selected_campaign = sel_rows[0]["campaign_clean"] if len(sel_rows) > 0 else None
 
 if selected_campaign:
     st.success(f"Filtered by campaign: {selected_campaign}")
