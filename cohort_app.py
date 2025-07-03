@@ -2,6 +2,7 @@ import streamlit as st
 st.set_page_config(page_title="Cohort Retention", layout="wide")
 
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
 import logging
@@ -10,7 +11,6 @@ from st_aggrid import AgGrid, GridOptionsBuilder  # clickable table component
 logging.basicConfig(format="%(levelname)s | %(message)s", level=logging.INFO)
 
 # ───────── helper for tiny progress‑bar ─────────
-
 def bar(p: float, w: int = 10) -> str:
     return "🟥" * int(round(p / 10)) + "⬜" * (w - int(round(p / 10)))
 
@@ -118,7 +118,7 @@ spend = (
     .sum()
     .reindex(size.index, fill_value=0)
 )
-spend_safe = spend.replace(0, pd.NA).astype(float)
+spend_safe = spend.replace(0, np.nan)
 roas = (revenue / spend_safe).round(2)
 spend = spend.round(2)
 
