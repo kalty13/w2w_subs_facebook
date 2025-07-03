@@ -1,4 +1,8 @@
 import streamlit as st
+import logging
+
+# basic logging config
+logging.basicConfig(format="%(levelname)s | %(message)s", level=logging.INFO)
 st.set_page_config(page_title="Cohort Retention", layout="wide")
 
 import pandas as pd
@@ -11,14 +15,33 @@ def bar(p, w=10):
 
 # ───────── load data ─────────
 FILE = Path(__file__).parent / "subscriptions.tsv"
+FB_FILE = Path(__file__).parent / "fb_export_it_all_time.csv"
+
+ALLOWED_SOURCES = ["ig", "fb"]
+
+# ───── sidebar debug switch ─────
+debug = st.sidebar.checkbox("Debug mode")
 
 @st.cache_data(show_spinner=False)
 def load(p: Path) -> pd.DataFrame:
     return pd.read_csv(p, sep="\t")
 
+
+@st.cache_data(show_spinner=False)
+def load_fb(p: Path) -> pd.DataFrame:
+    df = pd.read_csv(p)
+    if "Day" in df.columns:
+        df["Day"] = pd.to_datetime(df["Day"], errors="coerce")
+    return df
+
 df_raw = load(FILE)
+fb_raw = load_fb(FB_FILE)
 df_raw["created_at"] = pd.to_datetime(df_raw["created_at"])
-df_raw = df_raw[df_raw["user_visit.utm_source"].isin(["ig", "fb"])]
+df_raw = df_raw[df_raw["user_visit.utm_source"].isin(ALLOWED_SOURCES)]
+
+if debug:
+    logging.info("Subscriptions after IG/FB filter: %s rows", len(df_raw))
+    st.write("Subscriptions (head)", df_raw.head())
 
 # ─────────── UI filters ───────────
 min_d, max_d = df_raw["created_at"].dt.date.agg(["min", "max"])
@@ -30,6 +53,12 @@ weekly = st.checkbox("Weekly cohorts", True)
 utm_col       = "user_visit.utm_source"
 campaign_col  = "user_visit.utm_campaign"
 price_col     = "price.price_option_text"
+
+fb_raw = fb_raw[fb_raw["Campaign name"].isin(df_raw[campaign_col].dropna().unique())]
+
+if debug:
+    logging.info("FB rows after campaign filter: %s", len(fb_raw))
+    st.write("FB spend (head)", fb_raw.head())
 
 sel_utm = st.multiselect(
     "UTM source",
@@ -58,6 +87,9 @@ df = df_raw[
     (df_raw[price_col].isin(sel_price))
 ].copy()
 
+if debug:
+    logging.info("Subs after UI filters: %s rows", len(df))
+
 # ─────────── define cohort_date (daily / weekly) ───────────
 df["cohort_date"] = (
     df["created_at"].dt.to_period("W").apply(lambda r: r.start_time.date())
@@ -73,6 +105,9 @@ exp = (
 
 size = exp[exp.period == 0].groupby("cohort_date").size()
 
+if debug:
+    st.write("Cohort sizes", size.head())
+
 dead = (
     df[df["next_charge_date"].isna()]
       .groupby("cohort_date").size()
@@ -84,6 +119,22 @@ revenue = (
     df.groupby("cohort_date")["send_event_amount"].sum()
       .reindex(size.index, fill_value=0).round(2)
 )
+
+if debug:
+    st.write("Revenue per cohort", revenue.head())
+
+# ─────────── FB spend per cohort ───────────
+spend = (
+    fb_raw.groupby(
+        fb_raw["Day"].dt.to_period("W").apply(lambda r: r.start_time.date())
+        if weekly
+        else fb_raw["Day"].dt.date
+    )["Amount spent (USD)"].sum()
+      .reindex(size.index, fill_value=0)
+)
+
+if debug:
+    st.write("Spend per cohort", spend.head())
 ltv = (revenue / size).round(2)
 
 pivot = exp.pivot_table(index="cohort_date", columns="period",
