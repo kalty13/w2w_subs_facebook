@@ -38,6 +38,13 @@ df_raw = load(FILE)
 fb_raw = load_fb(FB_FILE)
 df_raw["created_at"] = pd.to_datetime(df_raw["created_at"])
 df_raw = df_raw[df_raw["user_visit.utm_source"].isin(ALLOWED_SOURCES)]
+df_raw["campaign_clean"] = (
+    df_raw["user_visit.utm_campaign"].astype(str).str.split(" (", n=1).str[0]
+)
+fb_raw["campaign_clean"] = (
+    fb_raw["Campaign name"].astype(str).str.split(" (", n=1).str[0]
+)
+fb_raw = fb_raw[fb_raw["campaign_clean"].isin(df_raw["campaign_clean"].dropna().unique())]
 
 if debug:
     logging.info("Subscriptions after IG/FB filter: %s rows", len(df_raw))
@@ -50,11 +57,15 @@ start, end   = st.date_input("Date range", [min_d, max_d], min_d, max_d)
 # weekly checkbox ON by default
 weekly = st.checkbox("Weekly cohorts", True)
 
+fb_raw["cohort_date"] = (
+    fb_raw["Day"].dt.to_period("W").apply(lambda r: r.start_time.date())
+    if weekly
+    else fb_raw["Day"].dt.date
+)
+
 utm_col       = "user_visit.utm_source"
 campaign_col  = "user_visit.utm_campaign"
 price_col     = "price.price_option_text"
-
-fb_raw = fb_raw[fb_raw["Campaign name"].isin(df_raw[campaign_col].dropna().unique())]
 
 if debug:
     logging.info("FB rows after campaign filter: %s", len(fb_raw))
@@ -125,11 +136,7 @@ if debug:
 
 # ─────────── FB spend per cohort ───────────
 spend = (
-    fb_raw.groupby(
-        fb_raw["Day"].dt.to_period("W").apply(lambda r: r.start_time.date())
-        if weekly
-        else fb_raw["Day"].dt.date
-    )["Amount spent (USD)"].sum()
+    fb_raw.groupby("cohort_date")["Amount spent (USD)"].sum()
       .reindex(size.index, fill_value=0)
 )
 
@@ -158,13 +165,15 @@ for ix in ret.index:
 
 combo = disp.copy()
 combo.insert(0, "Cohort death", death_cell)
-combo.insert(1, "Revenue USD", revenue.map(lambda v: f"${v:,.2f}"))
+combo.insert(1, "Spend USD", spend.map(lambda v: f"${v:,.2f}"))
+combo.insert(2, "Revenue USD", revenue.map(lambda v: f"${v:,.2f}"))
 combo["LTV USD"] = ltv.map(lambda v: f"${v:,.2f}")
 
 # TOTAL row
 weighted = lambda s: (s * size).sum() / size.sum()
 total = {
     "Cohort death": f"💀 {weighted(death_pct):.1f}% {bar(weighted(death_pct))}",
+    "Spend USD":    f"${spend.sum():,.2f}",
     "Revenue USD":  f"${revenue.sum():,.2f}",
     "LTV USD":      f"${weighted(ltv):,.2f}",
 }
@@ -187,7 +196,7 @@ for ix, row in combo.iterrows():
         fills.append(["#444444"] * len(combo.columns))
         fonts.append(["white"] * len(combo.columns))
         continue
-    c_row, f_row = ["#1e1e1e", "#333333", "#333333"], ["white"] * 3
+    c_row, f_row = ["#1e1e1e", "#333333", "#333333", "#333333"], ["white"] * 4
     for p in ret.loc[ix].values / 100:
         if p == 0 or pd.isna(p):
             c_row.append(BASE); f_row.append("white")
