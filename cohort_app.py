@@ -9,11 +9,12 @@ from st_aggrid import AgGrid, GridOptionsBuilder  # clickable table component
 
 logging.basicConfig(format="%(levelname)s | %(message)s", level=logging.INFO)
 
-# ───────── helper for tiny progress‑bar ─────────
-def bar(p: float, w: int = 10) -> str:
-    return "🟥" * int(round(p / 10)) + "⬜" * (w - int(round(p / 10)))
+# ─────── helper for tiny progress‑bar ───────
 
-# ───────── file paths ─────────
+def bar(p: float, w: int = 10) -> str:
+    return "🔵" * int(round(p / 10)) + "⬜" * (w - int(round(p / 10)))
+
+# ─────── file paths ───────
 BASE_DIR = Path(__file__).parent
 FILE_SUBS = BASE_DIR / "subscriptions.tsv"
 FILE_FB = BASE_DIR / "fb_export_it_all_time.csv"
@@ -34,7 +35,7 @@ def load_fb(p: Path) -> pd.DataFrame:
     fb["Link clicks"] = pd.to_numeric(fb["Link clicks"], errors="coerce").fillna(0)
     return fb
 
-# ───────── raw data ─────────
+# ─────── raw data ───────
 df_raw = load_subs(FILE_SUBS)
 fb_raw = load_fb(FILE_FB)
 
@@ -46,7 +47,7 @@ df_raw["campaign_clean"] = (
 )
 fb_raw = fb_raw[fb_raw["campaign_clean"].isin(df_raw["campaign_clean"].unique())]
 
-# ───────── UI filters ─────────
+# ─────── UI filters ───────
 min_d, max_d = df_raw["created_at"].dt.date.agg(["min", "max"])
 start, end = st.date_input("Date range", [min_d, max_d], min_d, max_d)
 
@@ -59,7 +60,7 @@ sel_price = st.multiselect(
     default=sorted(df_raw[price_col].dropna().unique()),
 )
 
-# ───────── clickable campaign table ─────────
+# ─────── clickable campaign table ───────
 campaign_stats = (
     df_raw.groupby("campaign_clean")["charges_count"].sum().reset_index(name="Purchases")
 )
@@ -73,7 +74,7 @@ grid = AgGrid(
     theme="alpine",
 )
 sel_rows = grid["selected_rows"]
-selected_campaign = sel_rows[0]["campaign_clean"] if len(sel_rows) > 0 else None
+selected_campaign = sel_rows[0]["campaign_clean"] if sel_rows and isinstance(sel_rows[0], dict) and "campaign_clean" in sel_rows[0] else None
 
 if selected_campaign:
     st.success(f"Filtered by campaign: {selected_campaign}")
