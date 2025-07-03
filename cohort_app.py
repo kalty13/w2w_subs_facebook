@@ -69,6 +69,7 @@ campaign_stats = (
 
 gb = GridOptionsBuilder.from_dataframe(campaign_stats)
 gb.configure_selection("single", use_checkbox=True)
+
 grid = AgGrid(
     campaign_stats,
     gridOptions=gb.build(),
@@ -79,7 +80,6 @@ grid = AgGrid(
 sel_rows = grid["selected_rows"]
 selected_campaign = sel_rows[0]["campaign_clean"] if sel_rows else None
 
-# information banner
 if selected_campaign:
     st.success(f"Filtered by campaign: {selected_campaign}")
 
@@ -139,12 +139,28 @@ ret.columns = [f"Period {p}" for p in ret.columns]
 
 # ───────── assemble display table ─────────
 
-death_cell = death_pct.map(lambda v: f"{v:.1f}% {bar(v)}<br>({dead.loc[v.index]})" if not pd.isna(v) else "—")
+death_cell = (
+    death_pct.map(lambda v: f"{v:.1f}%")
+    + " "
+    + death_pct.map(bar)
+    + "<br>("
+    + dead.astype(str)
+    + ")"
+)
 
-# Build human‑readable retention cells
 ret_disp = ret.applymap(lambda x: "—" if pd.isna(x) else f"{x:.1f}%")
 
-combo = pd.concat([death_cell.rename("Cohort death"), spend.map(lambda v: f"${v:,.2f}").rename("Spend USD"), revenue.map(lambda v: f"${v:,.2f}").rename("Revenue USD"), ltv.map(lambda v: f"${v:,.2f}").rename("LTV USD"), roas.map(lambda v: f"{v:.2f}×" if not pd.isna(v) else "—").rename("ROAS"), ret_disp], axis=1)
+combo = pd.concat(
+    [
+        death_cell.rename("Cohort death"),
+        spend.map(lambda v: f"${v:,.2f}").rename("Spend USD"),
+        revenue.map(lambda v: f"${v:,.2f}").rename("Revenue USD"),
+        ltv.map(lambda v: f"${v:,.2f}").rename("LTV USD"),
+        roas.map(lambda v: f"{v:.2f}×" if pd.notna(v) else "—").rename("ROAS"),
+        ret_disp,
+    ],
+    axis=1,
+)
 
 # TOTAL row
 weighted = lambda s: (s * size).sum() / size.sum()
@@ -177,7 +193,7 @@ for ix, row in combo.iterrows():
         fonts.append(["white"] * len(combo.columns))
         continue
     # first 5 cols constant colour (death, spend, revenue, ltv, roas)
-    c_row = ["#1e1e1e"] + ["#333333"] * 4
+        c_row = ["#1e1e1e", "#333333", "#333333", "#333333", "#333333"]
     f_row = ["white"] * 5
     for p in ret.loc[ix].values / 100:
         if p == 0 or pd.isna(p):
@@ -187,11 +203,25 @@ for ix, row in combo.iterrows():
             a = A0 + (A1 - A0) * p
             c_row.append(rgba(a))
             f_row.append(txt(a))
-    c_row.append("#333333"); f_row.append("white")
-    fills.append(c_row); fonts.append(f_row)
+    c_row.append("#333333")
+    f_row.append("white")
+    fills.append(c_row)
+    fonts.append(f_row)
 
 fig_table = go.Figure(go.Table(
-    header=dict(values=header, fill_color="#303030", font=dict(color="white", size=13), align="center"),
-    cells=dict(values=list(map(list, zip(*rows))), fill_color=list(map(list, zip(*fills))), font=dict(size=13, color=list(map(list, zip(*fonts)))), align="center", height=34)
+    header=dict(values=header, fill_color="#303030",
+                font=dict(color="white", size=13), align="center"),
+    cells=dict(values=list(map(list, zip(*rows))),
+               fill_color=list(map(list, zip(*fills))),
+               font=dict(size=13, color=list(map(list, zip(*fonts)))),
+               align="center", height=34)
 ))
-fig_table.update_layout(margin=dict(l=10, r=10
+fig_table.update_layout(
+    margin=dict(l=10, r=10, t=40, b=10),
+    paper_bgcolor="#0f0f0f",
+    plot_bgcolor="#0f0f0f"
+)
+
+st.title("Cohort Retention — IG & FB only — real_payment = 1")
+st.plotly_chart(fig_table, use_container_width=True)
+
