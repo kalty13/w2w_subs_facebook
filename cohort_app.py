@@ -36,6 +36,7 @@ def load_fb(p: Path) -> pd.DataFrame:
 
 df_raw = load(FILE)
 fb_raw = load_fb(FB_FILE)
+# merge Facebook cost data
 df_raw["created_at"] = pd.to_datetime(df_raw["created_at"])
 df_raw = df_raw[df_raw["user_visit.utm_source"].isin(ALLOWED_SOURCES)]
 df_raw["campaign_clean"] = (
