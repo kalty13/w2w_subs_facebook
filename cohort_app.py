@@ -1,119 +1,91 @@
 import streamlit as st
-import logging
-
-# basic logging config
-logging.basicConfig(format="%(levelname)s | %(message)s", level=logging.INFO)
 st.set_page_config(page_title="Cohort Retention", layout="wide")
 
 import pandas as pd
 import plotly.graph_objects as go
 from pathlib import Path
+import logging
 
-# ───────── helper for progress-bar in table ─────────
+# ───────── (простое) логирование в консоль ─────────
+logging.basicConfig(format="%(levelname)s | %(message)s", level=logging.INFO)
+
+# ───────── helper for progress-bar ─────────
 def bar(p, w=10):
     return "🟥"*int(round(p/10)) + "⬜"*(w-int(round(p/10)))
 
-# ───────── load data ─────────
-FILE = Path(__file__).parent / "subscriptions.tsv"
+# ───────── файлы ─────────
+FILE    = Path(__file__).parent / "subscriptions.tsv"
 FB_FILE = Path(__file__).parent / "fb_export_it_all_time.csv"
 
-ALLOWED_SOURCES = ["ig", "fb"]
-
-# ───── sidebar debug switch ─────
-debug = st.sidebar.checkbox("Debug mode")
-
 @st.cache_data(show_spinner=False)
-def load(p: Path) -> pd.DataFrame:
+def load_subs(p: Path) -> pd.DataFrame:
     return pd.read_csv(p, sep="\t")
-
 
 @st.cache_data(show_spinner=False)
 def load_fb(p: Path) -> pd.DataFrame:
-    df = pd.read_csv(p)
-    if "Day" in df.columns:
-        df["Day"] = pd.to_datetime(df["Day"], errors="coerce")
-    return df
+    fb = pd.read_csv(p)
+    fb["Day"] = pd.to_datetime(fb["Day"])
+    fb["campaign_clean"] = (
+        fb["Campaign name"].astype(str).str.split(" (", n=1, regex=False).str[0]
+    )
+    return fb
 
-df_raw = load(FILE)
+df_raw = load_subs(FILE)
 fb_raw = load_fb(FB_FILE)
+
+# ───────── базовая очистка ─────────
 df_raw["created_at"] = pd.to_datetime(df_raw["created_at"])
-df_raw = df_raw[df_raw["user_visit.utm_source"].isin(ALLOWED_SOURCES)]
-df_raw["campaign_clean"] = df_raw["user_visit.utm_campaign"].astype(str).str.split(" (", 1).str[0]
-fb_raw["campaign_clean"] = fb_raw["Campaign name"].astype(str).str.split(" (", 1).str[0]
-fb_raw = fb_raw[fb_raw["campaign_clean"].isin(df_raw["campaign_clean"].dropna().unique())]
+df_raw = df_raw[df_raw["user_visit.utm_source"].isin(["ig", "fb"])]
 
-if debug:
-    logging.info("Subscriptions after IG/FB filter: %s rows", len(df_raw))
-    st.write("Subscriptions (head)", df_raw.head())
+df_raw["campaign_clean"] = (
+    df_raw["user_visit.utm_campaign"].astype(str)
+         .str.split(" (", n=1, regex=False).str[0]
+)
+fb_raw = fb_raw[fb_raw["campaign_clean"].isin(df_raw["campaign_clean"].unique())]
 
-# ─────────── UI filters ───────────
+# ───────── UI фильтры ─────────
 min_d, max_d = df_raw["created_at"].dt.date.agg(["min", "max"])
 start, end   = st.date_input("Date range", [min_d, max_d], min_d, max_d)
 
-# weekly checkbox ON by default
 weekly = st.checkbox("Weekly cohorts", True)
 
-fb_raw["cohort_date"] = (
-    fb_raw["Day"].dt.to_period("W").apply(lambda r: r.start_time.date())
-    if weekly
-    else fb_raw["Day"].dt.date
-)
-
-utm_col       = "user_visit.utm_source"
-campaign_col  = "user_visit.utm_campaign"
-price_col     = "price.price_option_text"
-
-if debug:
-    logging.info("FB rows after campaign filter: %s", len(fb_raw))
-    st.write("FB spend (head)", fb_raw.head())
-
-sel_utm = st.multiselect(
-    "UTM source",
-    sorted(df_raw[utm_col].dropna().unique()),
-    default=sorted(df_raw[utm_col].dropna().unique())
-)
+campaign_col = "campaign_clean"
+price_col    = "price.price_option_text"
 
 sel_campaign = st.multiselect(
-    "UTM campaign",
+    "Campaign",
     sorted(df_raw[campaign_col].dropna().unique()),
     default=sorted(df_raw[campaign_col].dropna().unique())
 )
-
 sel_price = st.multiselect(
     "Price option",
     sorted(df_raw[price_col].dropna().unique()),
     default=sorted(df_raw[price_col].dropna().unique())
 )
 
-# ─────────── filter dataframe ───────────
+# ───────── фильтр подписок ─────────
 df = df_raw[
     (df_raw["real_payment"] == 1) &
     (df_raw["created_at"].dt.date.between(start, end)) &
-    (df_raw[utm_col].isin(sel_utm)) &
     (df_raw[campaign_col].isin(sel_campaign)) &
     (df_raw[price_col].isin(sel_price))
 ].copy()
 
-if debug:
-    logging.info("Subs after UI filters: %s rows", len(df))
+# ───────── cohort_date ─────────
+if weekly:
+    df["cohort_date"]     = df["created_at"].dt.to_period("W").dt.start_time.dt.date
+    fb_raw["cohort_date"] = fb_raw["Day"].dt.to_period("W").dt.start_time.dt.date
+else:
+    df["cohort_date"]     = df["created_at"].dt.date
+    fb_raw["cohort_date"] = fb_raw["Day"].dt.date
 
-# ─────────── define cohort_date (daily / weekly) ───────────
-df["cohort_date"] = (
-    df["created_at"].dt.to_period("W").apply(lambda r: r.start_time.date())
-    if weekly else
-    df["created_at"].dt.date
-)
-
-# ─────────── expand rows into periods ───────────
+# ───────── разворачиваем периоды ─────────
 exp = (
     df.loc[df.index.repeat(df["charges_count"].astype(int))]
       .assign(period=lambda d: d.groupby(level=0).cumcount())
 )
 
 size = exp[exp.period == 0].groupby("cohort_date").size()
-
-if debug:
-    st.write("Cohort sizes", size.head())
 
 dead = (
     df[df["next_charge_date"].isna()]
@@ -126,26 +98,23 @@ revenue = (
     df.groupby("cohort_date")["send_event_amount"].sum()
       .reindex(size.index, fill_value=0).round(2)
 )
-
-if debug:
-    st.write("Revenue per cohort", revenue.head())
-
-# ─────────── FB spend per cohort ───────────
-spend = (
-    fb_raw.groupby("cohort_date")["Amount spent (USD)"].sum()
-      .reindex(size.index, fill_value=0)
-)
-
-if debug:
-    st.write("Spend per cohort", spend.head())
 ltv = (revenue / size).round(2)
 
+# ───────── FB spend ─────────
+spend = (
+    fb_raw.groupby("cohort_date")["Amount spent (USD)"]
+          .sum()
+          .reindex(size.index, fill_value=0)
+          .round(2)
+)
+
+# ───────── retention матрица ─────────
 pivot = exp.pivot_table(index="cohort_date", columns="period",
                         aggfunc="size", fill_value=0)
 ret = pivot.div(size, axis=0).mul(100).round(1)
 pivot.columns = ret.columns = [f"Period {p}" for p in pivot.columns]
 
-# ─────────── build retention table ───────────
+# ───────── таблица отображения ─────────
 death_cell = (
      death_pct.map(lambda v: f"{v:.1f}%") + " "
     + death_pct.map(bar) + "<br>(" + dead.astype(str) + ")"
@@ -161,11 +130,11 @@ for ix in ret.index:
 
 combo = disp.copy()
 combo.insert(0, "Cohort death", death_cell)
-combo.insert(1, "Spend USD", spend.map(lambda v: f"${v:,.2f}"))
+combo.insert(1, "Spend USD",   spend.map(lambda v: f"${v:,.2f}"))
 combo.insert(2, "Revenue USD", revenue.map(lambda v: f"${v:,.2f}"))
 combo["LTV USD"] = ltv.map(lambda v: f"${v:,.2f}")
 
-# TOTAL row
+# TOTAL
 weighted = lambda s: (s * size).sum() / size.sum()
 total = {
     "Cohort death": f"💀 {weighted(death_pct):.1f}% {bar(weighted(death_pct))}",
@@ -178,7 +147,7 @@ for col in ret.columns:
 combo.loc["TOTAL"] = total
 combo = pd.concat([combo.drop("TOTAL").sort_index(ascending=False), combo.loc[["TOTAL"]]])
 
-# colour helpers
+# ───────── стили ─────────
 Y_R, Y_G, Y_B = 255, 212, 0
 rgba = lambda a: f"rgba({Y_R},{Y_G},{Y_B},{a:.2f})"
 txt  = lambda a: "black" if a > 0.5 else "white"
@@ -192,7 +161,10 @@ for ix, row in combo.iterrows():
         fills.append(["#444444"] * len(combo.columns))
         fonts.append(["white"] * len(combo.columns))
         continue
-    c_row, f_row = ["#1e1e1e", "#333333", "#333333", "#333333"], ["white"] * 4
+    # первые 4 колонки (death, spend, revenue, ltv)
+    c_row = ["#1e1e1e", "#333333", "#333333", "#333333"]
+    f_row = ["white"] * 4
+    # heat-map retention
     for p in ret.loc[ix].values / 100:
         if p == 0 or pd.isna(p):
             c_row.append(BASE); f_row.append("white")
@@ -212,5 +184,6 @@ fig_table = go.Figure(go.Table(
 ))
 fig_table.update_layout(margin=dict(l=10, r=10, t=40, b=10),
                         paper_bgcolor="#0f0f0f", plot_bgcolor="#0f0f0f")
-st.title("Cohort Retention – real_payment = 1")
+
+st.title("Cohort Retention – IG & FB only – real_payment = 1")
 st.plotly_chart(fig_table, use_container_width=True)
