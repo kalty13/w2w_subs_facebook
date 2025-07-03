@@ -2,7 +2,6 @@ import streamlit as st
 st.set_page_config(page_title="Cohort Retention", layout="wide")
 
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 
@@ -19,6 +18,7 @@ def load(p: Path) -> pd.DataFrame:
 
 df_raw = load(FILE)
 df_raw["created_at"] = pd.to_datetime(df_raw["created_at"])
+df_raw = df_raw[df_raw["user_visit.utm_source"].isin(["ig", "fb"])]
 
 # ─────────── UI filters ───────────
 min_d, max_d = df_raw["created_at"].dt.date.agg(["min", "max"])
